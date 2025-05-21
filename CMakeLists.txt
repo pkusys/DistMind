@@ -11,10 +11,8 @@ SET(CUDA_STANDARD 11)
 
 if(UNIX AND NOT APPLE)
   # for Linux, BSD, Solaris, Minix
-  # set(LIBFABRIC_LIBRARY /opt/amazon/efa/lib/libfabric.so)
-  # set(LIBFABRIC_INCLUDE_DIR /opt/amazon/efa/include)
-  set(LIBFABRIC_LIBRARY /opt/libfabric/lib/libfabric.so)
-  set(LIBFABRIC_INCLUDE_DIR /opt/libfabric/include)
+  set(LIBFABRIC_LIBRARY /opt/amazon/efa/lib/libfabric.so)
+  set(LIBFABRIC_INCLUDE_DIR /opt/amazon/efa/include)
 endif()
 
 find_package(Python 3.10 COMPONENTS Interpreter Development REQUIRED)
