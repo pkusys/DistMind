@@ -189,18 +189,6 @@ SHMWorker::SHMWorker(std::string comm_name,
       new EFAEndpoint(this->comm_name + "-efa-ep-" + std::to_string(rank));
   mem =
       new WorkerMemory(comm_name, nw, rank, data_buf_name, shared_data_size);
-  // mr registration
-  int ret = fi_mr_reg(efa_ep->domain, mem->data_buf_ptr,
-                  mem->data_buf_size, FI_RECV | FI_SEND, 0, 0, 0,
-                  &mr, NULL);
-  if (ret < 0) {
-    std::cerr << "fi_mr_reg err " << ret << "\n";
-    std::cerr << "fi_mr_reg err " << fi_strerror(-ret) << "\n";
-    return;
-  }
-  desc = fi_mr_desc(mr);
-  std::cout << "desc: " << desc << "\n";
-  
   this->comm_name = comm_name;
   this->rank = rank;
   this->set_local_efa_addr(efa_ep);
@@ -239,23 +227,19 @@ void SHMWorker::set_local_efa_addr(EFAEndpoint* efa) {
   std::cout << "Local ep addresses: \n" << readable << "\n";
 
   shm_lock(mem->sem_efa_addr, "set_local_efa_addr: sem_wait err");
-  std::memcpy(mem->efa_add_ptr, local_ep_addrs, EFA_ADDR_SIZE);
+  std::memcpy(mem->efa_add_ptr, local_ep_addrs, mem->efa_addr_size);
   shm_unlock(mem->sem_efa_addr, "set_local_efa_addr: sem_post err");
   print_sem_mutex_val(mem->sem_efa_addr);
 };
 
-void SHMWorker::_wait_cq(fid_cq* cq, int count, bool loop = true) {
+void SHMWorker::_wait_cq(fid_cq* cq, int count) {
   struct fi_cq_err_entry entry;
   int ret, completed = 0;
   double s = time_now();
   while (completed < count) {
     ret = fi_cq_read(cq, &entry, 1);
-    if (ret == -FI_EAGAIN && loop) {
+    if (ret == -FI_EAGAIN) {
       continue;
-    }
-    if (ret == -FI_EAGAIN && !loop) {
-      // std::cout << "cq not ready\n";
-      return;
     }
 
     if (ret == -FI_EAVAIL) {
@@ -273,6 +257,7 @@ void SHMWorker::_wait_cq(fid_cq* cq, int count, bool loop = true) {
 
     CHK_ERR("fi_cq_read ????", (ret < 0), ret);
     completed++;
+
     double cost_t = time_now() - s;
     // std::cout << completed << " job cost : " << cost_t * 1e3 << " ms\n";
     s = time_now();  // update start time
@@ -282,11 +267,7 @@ void SHMWorker::_wait_cq(fid_cq* cq, int count, bool loop = true) {
 /* insert remote efa addr into address vector */
 void SHMWorker::set_remote_efa_addr(EFAEndpoint* efa, Instruction* i) {
   // instruction data already copied into i->data
-  int ret = fi_av_insert(efa->av, i->data, 1, &(efa->peer_addr), 0, NULL);
-  if (ret <= 0) {
-    std::cerr << "fi_av_insert failed, ret=" << ret << "\n";
-    std::cerr << "fi_av_insert failed, errno=" << fi_strerror(-ret) << "\n";
-  }
+  fi_av_insert(efa->av, i->data, 1, &(efa->peer_addr), 0, NULL);
 
   efa->av_ready = true;
 
@@ -300,145 +281,6 @@ void SHMWorker::set_remote_efa_addr(EFAEndpoint* efa, Instruction* i) {
   std::cout << "verified inserted: " << readable << "\n";
 };
 
-void SHMWorker::efa_send_recv_batch(EFAEndpoint* efa, Instruction* instr) {
-  int batch_n = *(int*)instr->data;  // 4 bytes for number of batches
-  std::stringstream ss;
-  // ss << "enter worker efa_send_recv_batch: instr batch-n: " << batch_n << "\n";
-  // std::cout << ss.str();
-  // the connection cost a lot of time
-  const int waiting_time_for_con = 10;
-  const int max_retry = 1000;
-
-  int* wait_sizes = new int[batch_n];
-  size_t slice_threshold = 1 * 1024 * 1024;  // 4MB
-  int task_seq = 0;
-  // the rest of them: 8 bytes for offset; 4 bytes for size
-  for (int i = 0; i < batch_n; i++) {
-    size_t offset = *(size_t*)((instr->data) + 4 + 16 * i);
-    size_t batch_p_size = *(size_t*)((instr->data) + 4 + 16 * i + 8);
-    size_t _offset_add = 0;
-    int n_subtasks = batch_p_size / slice_threshold;
-    for (int j = 0; j < n_subtasks; j++) {
-      // sub tasks for smaller slice
-      char* _buf_s = (char*)mem->data_buf_ptr + offset + _offset_add;
-      
-      if (instr->type == SEND_BATCH) {
-        int ret = 1;
-        int rcount = 0;
-        do
-        {
-          ret = fi_tsend(efa->ep, _buf_s, slice_threshold, desc, efa->peer_addr,
-                  task_seq, NULL);
-          // std::cout << "send ret: " << ret << "\n";
-          if(rcount++ > max_retry) {
-            std::cerr << "send ret: " << ret << "\n";
-            exit(-1);
-            break;
-          }
-          if (ret == -FI_EAGAIN) {
-            _wait_cq(efa->txcq, 1, false);
-            usleep(waiting_time_for_con); 
-          }
-        }while (ret == -FI_EAGAIN);
-        task_seq++;
-      } else {
-        int ret = 1;
-        int rcount = 0;
-        do
-        {
-          ret = fi_trecv(efa->ep, _buf_s, slice_threshold, desc, efa->peer_addr,
-            task_seq, 0, NULL);
-          // std::cout << "recv ret: " << ret << "\n";
-          if(rcount++ > max_retry) {
-            std::cerr << "recv ret: " << ret << "\n";
-            exit(-1);
-            break;
-          }
-          if (ret == -FI_EAGAIN) {
-            _wait_cq(efa->txcq, 1, false);
-            usleep(waiting_time_for_con); 
-          }
-        }while (ret == -FI_EAGAIN);
-        task_seq++;
-      }
-      // increase offset
-      _offset_add += slice_threshold;
-    }
-    size_t remain_size = batch_p_size - _offset_add;
-    if (remain_size > 0) {
-      n_subtasks += 1;
-      wait_sizes[i] = n_subtasks;
-      char* _buf_s = (char*)mem->data_buf_ptr + offset + _offset_add;
-      if (instr->type == SEND_BATCH) {
-        // std::stringstream ss;
-        // const void * address = static_cast<const void*>(_buf_s);
-        // ss << "SHMWorker::efa_send_recv_batch:: _buf_s " << address 
-        //     << " ; remain_size " << remain_size 
-        //     << " ; task_seq " << task_seq << "\n";
-        // std::cout << ss.str();
-        int ret = 1;
-        int rcount = 0;
-        do
-        {
-          ret = fi_tsend(efa->ep, _buf_s, remain_size, desc, efa->peer_addr, task_seq,
-            NULL);
-          // std::cout << "send ret: " << ret << "\n";
-          if(rcount++ > max_retry) {
-            std::cout << "send ret: " << ret << "\n";
-            exit(-1);
-            break;
-          }
-          if (ret == -FI_EAGAIN) {
-            _wait_cq(efa->txcq, 1, false);
-            usleep(waiting_time_for_con); 
-          }
-        }while (ret == -FI_EAGAIN);
-        task_seq++;
-      } else {
-        int ret = 1;
-        int rcount = 0;
-        do
-        {
-          ret = fi_trecv(efa->ep, _buf_s, remain_size, desc, efa->peer_addr, task_seq,
-            0, NULL);
-          // std::cout << "recv ret: " << ret << "\n";
-          if(rcount++ > max_retry) {
-            std::cerr << "recv ret: " << ret << "\n";
-            exit(-1);
-            break;
-          }
-          if (ret == -FI_EAGAIN) {
-            _wait_cq(efa->txcq, 1, false);
-            usleep(waiting_time_for_con); 
-          }
-        }while (ret == -FI_EAGAIN);
-        task_seq++;
-      }
-    } else if (remain_size < 0) {
-      std::cerr << "!!!not possible to have remain size lower than 0\n";
-    } else {
-      wait_sizes[i] = n_subtasks;
-    }
-  }
-
-  for (int i = 0; i < batch_n; i++) {
-    // std::cout << comm_name << " worker:: wait for n sub tasks:" << wait_sizes[i]
-    //           << std::endl;
-    if (instr->type == SEND_BATCH) {
-      this->_wait_cq(efa->txcq, wait_sizes[i]);
-    } else {
-      this->_wait_cq(efa->rxcq, wait_sizes[i]);
-    }
-    // update worker mem cntr
-    shm_lock(mem->sem_cntr, "sem cntr lock, err\n");
-    (*(int*)mem->cntr_ptr) += 1;
-    shm_unlock(mem->sem_cntr, "sem cntr unlock, err\n");
-  }
-
-  delete[] wait_sizes;
-};
-
-/*
 void SHMWorker::efa_send_recv_batch(EFAEndpoint* efa, Instruction* instr) {
   int batch_n = *(int*)instr->data;  // 4 bytes for number of batches
   std::stringstream ss;
@@ -529,7 +371,7 @@ void SHMWorker::efa_send_recv_batch(EFAEndpoint* efa, Instruction* instr) {
   }
 
   delete[] wait_sizes;
-};*/
+};
 
 void SHMWorker::shutdown(){
 
@@ -576,7 +418,6 @@ void SHMWorker::run() {
 };
 
 SHMWorker::~SHMWorker() {
-  fi_close(&mr->fid);
   delete mem;
   delete efa_ep;
 }
@@ -636,8 +477,6 @@ void SHMCommunicator::create_workers_shm_sem() {
                       data_buf_fd, 0);
   // set memory to all zero
   std::fill_n((char*)ws_instr_ptr, INSTR_SIZE * nw, 0);
-  // set address to all zero
-  std::fill_n((char*)ws_efa_add_ptr, EFA_ADDR_SIZE * nw, 0);
   std::cout << "created instruction memory size: " << INSTR_SIZE* nw << "\n";
   // ------------ workers shm part end
 

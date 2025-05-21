@@ -12,8 +12,7 @@ int EFAEndpoint::init_res() {
   struct fi_cq_attr txcq_attr, rxcq_attr;
   struct fi_av_attr av_attr;
   int err;
-  std::string provider = "verbs;ofi_rxm";
-  std::string device = "mlx5_0";
+  std::string provider = "efa";
 
   hints = fi_allocinfo();
   if (!hints)
@@ -27,14 +26,9 @@ int EFAEndpoint::init_res() {
   // get provider
   hints->ep_attr->type = FI_EP_RDM;
   hints->fabric_attr->prov_name = strdup(provider.c_str());
-  hints->caps = FI_MSG | FI_TAGGED;
   // SAS
   hints->rx_attr->msg_order = FI_ORDER_SAS;
   hints->tx_attr->msg_order = FI_ORDER_SAS;
-  // device
-  hints->domain_attr->name = strdup(device.c_str());
-  hints->domain_attr->av_type = FI_AV_TABLE;
-  hints->domain_attr->mr_mode = FI_MR_BASIC;
   // std::cout << "===========================================Before check" << std::endl;
   err = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &fi);
   // std::cout << "===========================================After check" << std::endl;
@@ -43,8 +37,6 @@ int EFAEndpoint::init_res() {
 
   // fi_freeinfo(hints);
   std::cout << "Using OFI device: " << fi->fabric_attr->name << "\n";
-  std::cout << "Using OFI provider: " << fi->fabric_attr->prov_name << "\n";
-  std::cout << "Using MR Basic: " << (fi->domain_attr->mr_mode & FI_MR_BASIC) << "\n";
 
   // init fabric, domain, address-vector,
   err = fi_fabric(fi->fabric_attr, &fabric, NULL);
@@ -82,7 +74,7 @@ int EFAEndpoint::init_res() {
     std::cerr << "fi_endpoint err " << err << "\n";
 
   // bind complete queue, address vector to endpoint
-  err = fi_ep_bind(ep, (fid_t)txcq, FI_SEND | FI_TRANSMIT);
+  err = fi_ep_bind(ep, (fid_t)txcq, FI_SEND);
   if (err < 0)
     std::cerr << "fi_ep_bind txcq err " << err << "\n";
   err = fi_ep_bind(ep, (fid_t)rxcq, FI_RECV);

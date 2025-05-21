@@ -124,8 +124,6 @@ class SHMWorker {
   int rank;
   EFAEndpoint* efa_ep;
   WorkerMemory* mem;
-  struct fid_mr* mr = NULL;
-  void * desc = NULL;
 
  public:
   SHMWorker(std::string comm_name,
@@ -138,7 +136,7 @@ class SHMWorker {
 
   void set_local_efa_addr(EFAEndpoint* efa);
 
-  void _wait_cq(fid_cq* cq, int count, bool loop);
+  void _wait_cq(fid_cq* cq, int count);
 
   /* insert remote efa addr into address vector */
   void set_remote_efa_addr(EFAEndpoint* efa, Instruction* i);
