@@ -1,0 +1,15 @@
+**/libtorch
+.vscode/
+**/tmp
+**/tmp.cpp
+**.out
+**.o
+**.nvvp
+**/__pycache__
+**/build
+**/*.egg-info
+**/dist
+**/log.txt
+**/*.jpg
+*.bin
+Debug/

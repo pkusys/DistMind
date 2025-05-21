@@ -1,0 +1,6 @@
+model_name,     weight
+resnet152,      0
+inception_v3,   1
+densenet201,    0
+bert_base,      0
+gpt2,           0

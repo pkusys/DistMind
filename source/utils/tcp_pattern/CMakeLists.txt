@@ -1,0 +1,3 @@
+AUX_SOURCE_DIRECTORY(. DIR_TCP_PATTERN_SRCS)
+ADD_LIBRARY ( utils_tcp_pattern ${DIR_TCP_PATTERN_SRCS})
+TARGET_LINK_LIBRARIES( utils_tcp_pattern utils_tcp )

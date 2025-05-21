@@ -1,0 +1,1 @@
+configure_file(workload.py ${EXECUTABLE_OUTPUT_PATH}/workload.py COPYONLY)

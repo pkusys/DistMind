@@ -1,0 +1,3 @@
+AUX_SOURCE_DIRECTORY(. DIR_SHARED_MEMORY_SRCS)
+ADD_LIBRARY ( utils_shared_memory ${DIR_SHARED_MEMORY_SRCS})
+TARGET_LINK_LIBRARIES( utils_shared_memory pthread;rt )

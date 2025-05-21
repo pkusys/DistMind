@@ -1,0 +1,10 @@
+{
+    "model_list_filename": "build/ray/model_list.txt",
+    "server_list_file": "build/ray/server_list.txt",
+    "addr_for_subscriber": "0.0.0.0",
+    "port_for_subscriber": 8014,
+    "inference_workload_s": [
+        2,
+        2
+    ]
+}
